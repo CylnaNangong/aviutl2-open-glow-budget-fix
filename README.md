@@ -1,3 +1,249 @@
+~~This project exists because a 6251×4501 stained-glass image refused to glow.~~
+
+# OpenGlow Budget Fix
+
+日本語 | English | 中文
+
+---
+
+# 日本語
+
+## 概要
+
+OpenGlow r2 の実験的な修正版です。
+
+高解像度画像を処理する際に発生する、
+
+- CreateRenderTargetView failed
+- invalid buffer type
+- invalid shader output parameter
+
+などの問題を軽減するため、
+EffectUtils_Budget を利用した動的なワークスペース縮小処理を追加しています。
+
+---
+
+## 背景
+
+6251×4501 の画像へ OpenGlow を適用した際に、
+キャッシュ関連と思われる問題が発生しました。
+
+調査の結果、Glow Pyramid が AviUtl2 の
+TemporaryImageCacheSize を超過する可能性があることが分かりました。
+
+本フォークはその問題を回避するための実験的な実装です。
+
+---
+
+## Status
+
+現在は実験的フォークです。
+
+将来的に OpenGlow 本体へ同様の修正が取り込まれた場合は、
+可能であれば本家版の利用を推奨します。
+---
+
+## 謝辞
+
+私は日本語話者ではないため、
+Issue の調査・整理および README の作成には
+Microsoft Copilot の協力を利用しています。
+
+また、修正版コード（dynamic workspace scaling 実装）は
+Arena.ai 上で利用した AI Agent の支援を受けて作成されました。
+
+問題調査・検証・統合:
+
+- CylnaNangong
+
+調査補助:
+
+- Microsoft Copilot
+
+実装補助:
+
+- Arena.ai 上の AI Agent
+  （利用時点で具体的な提供モデルは不明）
+
+---
+
+## Credits
+
+### Original OpenGlow
+
+IZUisMe
+
+### Budget Utilities
+
+HexBrowns
+(EffectUtils_Budget.lua)
+
+## ライセンス
+
+OpenGlow:
+
+- MIT License
+
+EffectUtils_Budget.lua:
+
+- MIT-0
+
+本フォークは元プロジェクトのライセンス条件に従っています。
+
+---
+
+# English
+
+## Overview
+
+This is an experimental fork of OpenGlow r2.
+
+The goal of this fork is to improve stability when processing very large source images by integrating budget-aware workspace scaling.
+
+This helps prevent errors such as:
+
+- CreateRenderTargetView failed
+- invalid buffer type
+- invalid shader output parameter
+
+---
+
+## Status
+
+This is currently an experimental fork.
+
+If a similar fix is integrated into the upstream OpenGlow project,
+users are encouraged to use the upstream version whenever possible.
+
+---
+
+## Background
+
+While applying OpenGlow to a 6251×4501 image,
+cache-related failures were observed.
+
+Investigation suggested that the Glow Pyramid could exceed AviUtl2's TemporaryImageCacheSize budget.
+
+This fork introduces experimental budget-aware workspace scaling to avoid those failures.
+
+---
+
+## Acknowledgements
+
+I do not speak Japanese.
+
+Investigation, issue reporting, README writing and documentation were assisted by Microsoft Copilot.
+
+The dynamic workspace scaling implementation included in this fork was developed with assistance from an AI Agent available through Arena.ai.
+
+Contributors:
+
+- CylnaNangong (investigation, testing, integration)
+- Microsoft Copilot (analysis and documentation assistance)
+- Arena.ai Agent (implementation assistance)
+
+The exact underlying model/provider used by Arena.ai was unknown at the time of development.
+
+---
+
+## Credits
+
+Original OpenGlow:
+IZUisMe
+
+Budget Utilities:
+HexBrowns (EffectUtils_Budget.lua)
+
+---
+
+# 中文
+
+## 简介
+
+这是 OpenGlow r2 的一个实验性修正版本。
+
+主要目的是解决超高分辨率素材下可能出现的：
+
+- CreateRenderTargetView failed
+- invalid buffer type
+- invalid shader output parameter
+
+等缓存预算相关问题。
+
+---
+
+## 状态
+
+本项目目前属于实验性 Fork。
+
+如果未来 OpenGlow 官方版本集成了类似修复，
+建议优先使用官方版本。
+
+---
+
+## 问题来源
+
+在给一张：
+
+```text
+6251 × 4501
+```
+
+的彩窗素材应用 OpenGlow 时，
+
+原版 OpenGlow 会触发：
+
+```text
+CreateRenderTargetView failed
+```
+
+以及：
+
+```text
+invalid buffer type
+```
+
+经过排查发现，问题很可能与 Glow Pyramid 占用超过 AviUtl2 的 TemporaryImageCacheSize 有关。
+
+本 Fork 通过动态工作空间缩放（dynamic workspace scaling）来缓解这一问题。
+
+---
+
+## 鸣谢
+
+本人不会日语。
+
+Issue 排查、资料整理、README 编写等工作得到了 Microsoft Copilot 的协助。
+
+修复版代码中的 dynamic workspace scaling 实现，
+则是在 Arena.ai 平台 AI Agent 的辅助下完成。
+
+感谢：
+
+- IZUisMe（OpenGlow 原作者）
+- HexBrowns（EffectUtils_Budget.lua）
+- Microsoft Copilot（问题分析与文档整理）
+- Arena.ai Agent（修复实现辅助）
+
+以及所有愿意分享代码和思路的 AviUtl2 开发者。
+
+---
+
+## License
+
+Original OpenGlow:
+MIT License
+
+EffectUtils_Budget.lua:
+MIT-0
+
+This fork follows the original licenses.
+
+
+
+
+======以下为原README / Below is the original README======
+
 # Open Glow
 
 ![Open Glow ON/OFF比較](OpenglowONOFF.gif)
