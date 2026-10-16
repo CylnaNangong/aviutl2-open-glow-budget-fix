@@ -20,29 +20,37 @@
 --[[pixelshader@OG_Pre:
 // 前処理: グロー空間(回転+短軸圧縮)へ変換しつつ、ガンマ補正でリニア光化、
 //         しきい値カット(ソフトニー)と光色を適用。
-//         圧縮軸は幅2Aのテントフィルタで縮小(ボックスよりエイリアシングが少ない)。
+//         予算に応じて解像度を下げる場合も、X/Y両方向のテントフィルタで縮小する。
 Texture2D src : register(t0);
 SamplerState smp : register(s0);
 cbuffer constant0 : register(b0) {
-    float th_lin, knee, gam, taps;
-    float tint_r, tint_g, tint_b, pad0;
+    float th_lin, knee, gam, taps_x;
+    float tint_r, tint_g, tint_b, taps_y;
     float m00, m01, m10, m11;
     float crx, cry, cgx, cgy;
-    float vx, vy, inv_w, inv_h;
+    float inv_w, inv_h, pad0, pad1;
 };
 float4 OG_Pre(float4 pos : SV_Position) : SV_Target {
     float2 q = pos.xy - float2(cgx, cgy);
     float2 p = float2(m00 * q.x + m01 * q.y, m10 * q.x + m11 * q.y) + float2(crx, cry);
-    int n = int(taps + 0.5);
+    int nx = int(taps_x + 0.5);
+    int ny = int(taps_y + 0.5);
     float4 acc = 0.0;
     float wsum = 0.0;
-    for (int i = 0; i < n; i++) {
-        float t = 2.0 * (i + 0.5) / taps - 1.0;
-        float w = 1.0 - abs(t);
-        float2 sp = p + t * float2(vx, vy);
-        float4 c = src.SampleLevel(smp, sp * float2(inv_w, inv_h), 0);
-        acc += w * float4(pow(max(c.rgb, 0.0), gam), c.a);
-        wsum += w;
+    float2 dx = float2(m00, m10);
+    float2 dy = float2(m01, m11);
+    for (int j = 0; j < ny; j++) {
+        float ty = ny > 1 ? 2.0 * (j + 0.5) / taps_y - 1.0 : 0.0;
+        float wy = 1.0 - abs(ty);
+        for (int i = 0; i < nx; i++) {
+            float tx = nx > 1 ? 2.0 * (i + 0.5) / taps_x - 1.0 : 0.0;
+            float wx = 1.0 - abs(tx);
+            float w = wx * wy;
+            float2 sp = p + tx * dx + ty * dy;
+            float4 c = src.SampleLevel(smp, sp * float2(inv_w, inv_h), 0);
+            acc += w * float4(pow(max(c.rgb, 0.0), gam), c.a);
+            wsum += w;
+        }
     }
     acc /= wsum;
     float br = max(acc.r, max(acc.g, acc.b));
@@ -183,6 +191,7 @@ float4 OG_Final(float4 pos : SV_Position) : SV_Target {
 ]]
 
 local obj, math = obj, math
+local budget = require("EffectUtils_Budget")
 
 -- パラメータ正規化
 local I = strength / 100
@@ -215,11 +224,6 @@ end
 -- M: グロー空間→実空間 (回転*拡大)、Iv: その逆
 local m00, m01, m10, m11 = co * sx, -si * sy, si * sx, co * sy
 local i00, i01, i10, i11 = co / sx, si / sx, -si / sy, co / sy
--- 圧縮軸のテントフィルタ(幅2A)のタップ数: 間隔が1px以下になるよう2⌈A⌉
-local K = 1
-if A > 1 then K = 2 * math.ceil(A - 1e-6) end
-local vx, vy
-if elongX then vx, vy = m00, m10 else vx, vy = m01, m11 end
 
 -- グローがはみ出す領域を確保 (フィルタオブジェクト時とサイズ固定時は拡張しない)
 local maxw, maxh = obj.getinfo("image_max")
@@ -236,32 +240,90 @@ end
 
 local W, H = obj.w, obj.h
 
--- グロー空間バッファのサイズ (実空間の矩形を逆変換したときの外接矩形)
-local GW = math.min(math.max(1, math.ceil((W * math.abs(co) + H * math.abs(si)) / sx)), maxw)
-local GH = math.min(math.max(1, math.ceil((W * math.abs(si) + H * math.abs(co)) / sy)), maxh)
+-- グロー空間バッファの元サイズ (実空間の矩形を逆変換したときの外接矩形)
+local GW0 = math.min(math.max(1, math.ceil((W * math.abs(co) + H * math.abs(si)) / sx)), maxw)
+local GH0 = math.min(math.max(1, math.ceil((W * math.abs(si) + H * math.abs(co)) / sy)), maxh)
 
 -- ピラミッドの段数: 拡散半径Rgに対して log2(Rg) 段 (端数は最上段の重みで補間)
 -- 重み比 q = 2^(2-p): 1オクターブごとに重みq倍 → 合成PSFの裾が r^(-p) に漸近
 --   p=2 (q=1, 等重み) がちょうど逆二乗則
 local p = falloff
 local q = 2 ^ (2 - p)
-local nf = math.max(math.log(Rg) / math.log(2), 0.05)
-local n_full = math.min(math.floor(nf), 12)
-local frac = nf - n_full
-local M = math.min(n_full + (frac > 0 and 1 or 0), 12)
 
--- 各レベルのサイズ (小さくなりすぎたら打ち切り)
-local lw, lh = { [0] = GW }, { [0] = GH }
-local Meff = 0
-for k = 1, M do
-    if math.max(lw[k - 1], lh[k - 1]) <= 2 then break end
-    lw[k] = math.max(1, math.ceil(lw[k - 1] / 2))
-    lh[k] = math.max(1, math.ceil(lh[k - 1] / 2))
-    Meff = k
+-- 指定解像度・半径で実際に使うピラミッドの段とサイズを作る
+local function make_levels(gw, gh, rg)
+    local nf = math.max(math.log(rg) / math.log(2), 0.05)
+    local n_full = math.min(math.floor(nf), 12)
+    local frac = nf - n_full
+    local requested = math.min(n_full + (frac > 0 and 1 or 0), 12)
+    local lw, lh = { [0] = gw }, { [0] = gh }
+    local meff = 0
+    for k = 1, requested do
+        if math.max(lw[k - 1], lh[k - 1]) <= 2 then break end
+        lw[k] = math.max(1, math.ceil(lw[k - 1] / 2))
+        lh[k] = math.max(1, math.ceil(lh[k - 1] / 2))
+        meff = k
+    end
+    local m = math.min(requested, meff)
+    local partial = frac > 0 and m == n_full + 1
+    return m, lw, lh, n_full, frac, partial
 end
-M = math.min(M, Meff)
-if M < 1 then return end
-local partial = frac > 0 and M == n_full + 1
+
+-- cache:open_glow/* 全段の総ドット数を見積もり、Budget の目安内に内部解像度を収める。
+local full_M, full_lw, full_lh = make_levels(GW0, GH0, Rg)
+if full_M < 1 then return end
+local full_dots = 0
+for k = 0, full_M do full_dots = full_dots + full_lw[k] * full_lh[k] end
+local work_scale = budget.scale(0, full_dots)
+if not work_scale then
+    budget.refuse("OpenGlow", W, H)
+    return
+end
+
+-- 低解像度化後は、物理的なぼかし半径も同じ比率で縮める。
+-- 端数丸めを含めた実サイズで再計算し、総量が予算を超えないことを確認する。
+local GW, GH, M, lw, lh, n_full, frac, partial
+local work_dots = 0
+for attempt = 1, 8 do
+    GW = math.max(1, math.ceil(GW0 * work_scale))
+    GH = math.max(1, math.ceil(GH0 * work_scale))
+    local scale_x, scale_y = GW / GW0, GH / GH0
+    local rg_work = Rg * math.sqrt(scale_x * scale_y)
+    M, lw, lh, n_full, frac, partial = make_levels(GW, GH, rg_work)
+    if M < 1 then return end
+    work_dots = 0
+    for k = 0, M do work_dots = work_dots + lw[k] * lh[k] end
+    if budget.fits(work_dots) then break end
+    local correction = budget.scale(0, work_dots)
+    if not correction then
+        budget.refuse("OpenGlow", W, H)
+        return
+    end
+    work_scale = work_scale * correction
+end
+if not budget.fits(work_dots) then
+    budget.refuse("OpenGlow", W, H)
+    return
+end
+
+local scale_x, scale_y = GW / GW0, GH / GH0
+if scale_x < 0.999999 or scale_y < 0.999999 then
+    budget.warn_once("OpenGlow", "scaled",
+        "バッファ予算に合わせ、グロー内部解像度を縮小して処理します")
+end
+
+-- 低解像度バッファの1画素が元の何画素に相当するかを反映。
+-- これにより変換範囲を全体に保ち、中央だけが光る症状を防ぐ。
+local pm00, pm01, pm10, pm11 = m00 / scale_x, m01 / scale_y, m10 / scale_x, m11 / scale_y
+local fi00, fi01, fi10, fi11 = i00 * scale_x, i01 * scale_x, i10 * scale_y, i11 * scale_y
+
+-- 前処理のテントフィルタ。縮小時は両方向を適切にサンプリングし、通常解像度では従来の圧縮軸フィルタと一致。
+local function tap_count(step)
+    if step <= 1.000001 then return 1 end
+    return math.min(64, 2 * math.ceil(step - 1e-6))
+end
+local Kx = tap_count(sx / scale_x)
+local Ky = tap_count(sy / scale_y)
 
 -- 正規化係数 (実際に使うレベルの重みの総和)
 local total, coeff = 1.0, 1.0
@@ -284,11 +346,11 @@ end
 local t_lin = (threshold / 100) ^ gam
 obj.clearbuffer(buf[0], GW, GH)
 obj.pixelshader("OG_Pre", buf[0], "object", {
-    t_lin, 0.5 * t_lin, gam, K,
-    tr, tg, tb, 0,
-    m00, m01, m10, m11,
+    t_lin, 0.5 * t_lin, gam, Kx,
+    tr, tg, tb, Ky,
+    pm00, pm01, pm10, pm11,
     W / 2, H / 2, GW / 2, GH / 2,
-    vx, vy, 1 / W, 1 / H,
+    1 / W, 1 / H, 0, 0,
 }, "copy", "clip")
 
 -- [2] ダウンサンプル・チェーン
@@ -307,7 +369,7 @@ end
 -- [4] 合成 (グロー空間から逆変換で読み出し)
 obj.pixelshader("OG_Final", "object", { "object", buf[0] }, {
     I / total, 1 / gam, gam, blend_mode,
-    i00, i01, i10, i11,
+    fi00, fi01, fi10, fi11,
     W / 2, H / 2, GW / 2, GH / 2,
     1 / GW, 1 / GH, dither and 1 or 0, mono_dither and 1 or 0,
     tox, toy, GW, GH,
