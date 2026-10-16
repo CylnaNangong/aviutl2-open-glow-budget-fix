@@ -55,7 +55,7 @@ Arena.ai 上で利用した AI Agent の支援を受けて作成されました�
 
 問題調査・検証・統合:
 
-- CylnaNangong
+- CylnaNangong（南宫若馨Cylna）
 
 調査補助:
 
